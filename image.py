@@ -1,25 +1,44 @@
+import copy
+
 import cv2 as cv
 from numpy import ndarray
-from typing import Sequence
+from typing import Sequence, Set, Dict, List, Tuple
+from itertools import chain
+
+Point = Tuple[int, int]
+
+Rectangle = Tuple[Point, Point]
+
+Color = Tuple[int, int, int]
 
 
 class Image:
     img: ndarray = None
     color: str = "bgr"
+    rect: List[Tuple[Rectangle, Color]] = []
+    box: Dict[str, List[Rectangle]] = {}
+    contour: List[ndarray] = []
 
-    def __init__(self, img: ndarray, color: str = "bgr"):
+    def __init__(self, img: ndarray, color: str = "bgr", box=None, contour=None):
         self.img = img
         self.color = color
+        if box:
+            self.box = box
+        if contour:
+            self.contour = contour
 
     def mat(self) -> ndarray:
         return self.img.copy()
 
     def display(self, name: str) -> "Image":
+        img = self.img.copy()
+        for (begin, end), color in self.rect:
+            cv.rectangle(img, [*begin], [*end], color)
         cv.imshow(name, self.img)
         return self
 
     def clone(self) -> "Image":
-        return Image(self.img.copy(), color=self.color)
+        return copy.copy(self)
 
     def map(self, f) -> "Image":
         return f(self)
@@ -65,28 +84,41 @@ class Image:
         img = cv.inRange(self.img, lo, hi)
         return Image(img, color="gray")
 
-    def find_contour(self, mode, method) -> Sequence[ndarray]:
+    def find_contour(self, mode, method) -> "Image":
+        img = self.clone()
         con, _ = cv.findContours(self.img, mode, method)
-        return con
+        img.contour += [c for c in con]
+        return img
 
     def abs_diff(self, other: "Image") -> "Image":
         assert self.color == other.color
         img = cv.absdiff(self.img, other.img)
         return Image(img, color=self.color)
 
-    def draw_rect(self, begin: (int, int), end: (int, int), color: (int, int, int) = (255, 0, 255)) -> "Image":
-        img = self.img.copy()
-        cv.rectangle(img, begin, end, color)
-        return Image(img, color=self.color)
+    def draw_rect(self, rect: Rectangle, color: Color = (255, 0, 255)) -> "Image":
+        self.rect += [(rect, color)]
+        return self
+
+    def plot_box(self, name: Set[str] = None):
+        img = self.clone()
+        try:
+            it = chain(*[self.box[n] for n in name])
+        except TypeError:
+            it = chain(*self.box.values())
+        for a, b in it:
+            img = img.draw_rect(a, b)
+        return img
 
 
 class CascadeFinder:
-    def __init__(self, path: str):
+    name: str
+
+    def __init__(self, name: str, path: str):
+        self.name = name
         self.cascade = cv.CascadeClassifier(path)
 
     def __call__(self, img: Image) -> Image:
-        rect = self.cascade.detectMultiScale(img.gray().mat(), 1.3, 5)
         img = img.clone()
-        for x, y, w, h in rect:
-            img = img.draw_rect((x, y), (x + w, y + h))
+        rect = [((x, y), ((x + w), (y + h))) for x, y, w, h in self.cascade.detectMultiScale(img.gray().mat(), 1.3, 5)]
+        img.box[self.name] = rect
         return img
